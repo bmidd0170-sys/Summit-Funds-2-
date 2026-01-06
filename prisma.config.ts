@@ -3,18 +3,15 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
-const databaseUrl = process.env.DATABASE_URL;
-
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is not set");
-}
-
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
+    seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    url: databaseUrl,
+    // Cast to string so TypeScript is satisfied; Prisma will error at runtime
+    // if DATABASE_URL is actually missing.
+    url: process.env.DATABASE_URL as string,
   },
 });
