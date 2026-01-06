@@ -1,8 +1,25 @@
 
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "../../firebase";
 
 export default function DashboardPage() {
+    const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [displayName, setDisplayName] = useState<string | null>(null);
+    const [loadingUser, setLoadingUser] = useState(true);
+    const [saveError, setSaveError] = useState("");
+
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            setUserEmail(user?.email ?? null);
+            setDisplayName(user?.displayName ?? null);
+            setLoadingUser(false);
+        });
+
+        return () => unsubscribe();
+    }, []);
+
     // State for created budget plans
     const [budgetPlans, setBudgetPlans] = useState<Array<{ name: string; amount: string }>>([]);
     // Handlers for goal modal
@@ -14,18 +31,50 @@ export default function DashboardPage() {
         setGoalDate("");
         setGoalAmount("");
     };
-    const handleGoalSubmit = (e: React.FormEvent) => {
+    const handleGoalSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setGoals([
-            ...goals,
-            {
-                name: goalName,
-                desc: goalDesc,
-                date: goalDate,
-                amount: goalAmount,
-            },
-        ]);
-        handleCloseModal();
+        setSaveError("");
+
+        if (!userEmail) {
+            setSaveError("You must be logged in to add a goal.");
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/goals", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: userEmail,
+                    displayName,
+                    name: goalName,
+                    desc: goalDesc,
+                    date: goalDate,
+                    amount: goalAmount,
+                }),
+            });
+
+            if (!res.ok) {
+                throw new Error("Failed to save goal");
+            }
+
+            const data = await res.json();
+            const created = data.goal;
+
+            setGoals([
+                ...goals,
+                {
+                    name: created.name,
+                    desc: created.desc,
+                    date: new Date(created.date).toISOString().slice(0, 10),
+                    amount: String(created.amount),
+                },
+            ]);
+            handleCloseModal();
+        } catch (err) {
+            console.error(err);
+            setSaveError("Could not save goal. Please try again.");
+        }
     };
     const [showGoalModal, setShowGoalModal] = useState(false);
     const [goalName, setGoalName] = useState("");
@@ -77,22 +126,98 @@ export default function DashboardPage() {
             .finally(() => setAiLoading(false));
     }, [budgetName, budgetAmount, goals]);
 
-    const handleBudgetSubmit = (e: React.FormEvent) => {
+    const handleBudgetSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        // Add the new budget plan to the list
-        setBudgetPlans([
-            ...budgetPlans,
-            { name: budgetName, amount: budgetAmount },
-        ]);
-        setBudgetName("");
-        setBudgetAmount("");
-        handleCloseBudgetModal();
+        setSaveError("");
+
+        if (!userEmail) {
+            setSaveError("You must be logged in to create a budget plan.");
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/budget-plans", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: userEmail,
+                    displayName,
+                    name: budgetName,
+                    amount: budgetAmount,
+                }),
+            });
+
+            if (!res.ok) {
+                throw new Error("Failed to save budget plan");
+            }
+
+            const data = await res.json();
+            const created = data.budgetPlan;
+
+            setBudgetPlans([
+                ...budgetPlans,
+                { name: created.name, amount: String(created.amount) },
+            ]);
+            setBudgetName("");
+            setBudgetAmount("");
+            handleCloseBudgetModal();
+        } catch (err) {
+            console.error(err);
+            setSaveError("Could not save budget plan. Please try again.");
+        }
     };
+
+    useEffect(() => {
+        if (!userEmail) return;
+
+        const fetchData = async () => {
+            try {
+                const [goalsRes, budgetsRes] = await Promise.all([
+                    fetch(`/api/goals?email=${encodeURIComponent(userEmail)}`),
+                    fetch(`/api/budget-plans?email=${encodeURIComponent(userEmail)}`),
+                ]);
+
+                if (goalsRes.ok) {
+                    const data = await goalsRes.json();
+                    const loadedGoals = (data.goals || []).map((g: any) => ({
+                        name: g.name,
+                        desc: g.desc,
+                        date: new Date(g.date).toISOString().slice(0, 10),
+                        amount: String(g.amount),
+                    }));
+                    setGoals(loadedGoals);
+                }
+
+                if (budgetsRes.ok) {
+                    const data = await budgetsRes.json();
+                    const loadedBudgets = (data.budgetPlans || []).map((b: any) => ({
+                        name: b.name,
+                        amount: String(b.amount),
+                    }));
+                    setBudgetPlans(loadedBudgets);
+                }
+            } catch (err) {
+                console.error("Failed to load dashboard data", err);
+            }
+        };
+
+        fetchData();
+    }, [userEmail]);
     return (
         <main className="dashboard bg-[#F8F9FA] min-h-screen font-sans p-6 md:p-12">
             <div className="dashboard-header mb-8">
                 <h1 className="dashboard-title text-3xl md:text-4xl font-bold text-[#2D5F7E] mb-2">Dashboard</h1>
                 <p className="text-[#5A5A5A] text-lg">Welcome back! Here's your financial overview</p>
+                {loadingUser ? (
+                    <p className="text-sm text-gray-500 mt-1">Checking your account...</p>
+                ) : userEmail ? (
+                    <p className="text-sm text-gray-600 mt-1">Signed in as {userEmail}</p>
+                ) : (
+                    <p className="text-sm text-red-600 mt-1">You are not signed in. Changes will not be saved.</p>
+                )}
+                {saveError && (
+                    <p className="text-sm text-red-600 mt-1">{saveError}</p>
+                )}
             </div>
 
             {/* Stats Grid */}
